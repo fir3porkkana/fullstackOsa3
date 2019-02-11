@@ -1,8 +1,27 @@
+if (process.env.NODE_ENV !== "production") {
+  require("dotenv").config()
+}
 const express = require("express")
-const app = express()
 const bodyParser = require("body-parser")
+const app = express()
+const Person = require("./models/person")
 const morgan = require("morgan")
 const cors = require("cors")
+
+const errorHandler = (error, req, res, next) => {
+  console.error(error.message)
+
+  if (error.name === "CastError" && error.kind === "ObjectId") {
+    return res.status(400).send({ error: "malformatted id" })
+  } else if (error.name === "ValidationError") {
+    return res.status(400).json({ error: error.message })
+  }
+  next(error)
+}
+
+const unknownEndpoint = (req, res) => {
+  res.status(404).send({ error: "unknown endpoint" })
+}
 
 app.use(cors())
 app.use(express.static("build"))
@@ -13,29 +32,45 @@ morgan.token("datalogger", function(req, res) {
 app.use(morgan(":method :url :response-time ms :datalogger"))
 
 app.get("/api/persons", (req, res) => {
-  res.json(luettelo)
+  Person.find({})
+    .then(persons => {
+      res.json(persons.map(person => person.toJSON()))
+    })
+    .catch(error => {
+      console.log("request failed: ", error.message)
+      res.status(404).end()
+    })
 })
 
 app.get("/info", (req, res) => {
-  res.send(
-    `   <div>
-        <p>Puhelinluettelossa ${luettelo.length} henkilön tiedot</p>
-        <p>${new Date()}<p/>
-        </div>`
-  )
+  Person.find({}).then(persons => {
+    res.send(
+      `   <div>
+            <p>Puhelinluettelossa ${persons.length} henkilön tiedot</p>
+            <p>${new Date()}<p/>
+            </div>`
+    )
+  })
 })
 
-app.get("/api/persons/:id", (req, res) => {
-  const id = Number(req.params.id)
-  const person = luettelo.find(person => person.id === id)
-  res.json(person)
+app.get("/api/persons/:id", (req, res, next) => {
+  Person.findById(req.params.id)
+    .then(person => {
+      if (person) {
+        res.json(person.toJSON())
+      } else {
+        res.status(404).end()
+      }
+    })
+    .catch(error => next(error))
 })
 
-app.delete("/api/persons/:id", (req, res) => {
-  const id = Number(req.params.id)
-  luettelo = luettelo.filter(person => person.id !== id)
-
-  res.status(204).end()
+app.delete("/api/persons/:id", (req, res, next) => {
+  Person.findByIdAndDelete(req.params.id)
+    .then(() => {
+      res.status(204).end()
+    })
+    .catch(error => next(error))
 })
 
 app.post(`/api/persons`, (req, res) => {
@@ -60,15 +95,31 @@ app.post(`/api/persons`, (req, res) => {
     })
   }
 
-  const person = {
+  const person = new Person({
     id: Math.floor(Math.random() * 10000),
+    name: body.name,
+    number: body.number
+  })
+
+  person.save().then(savedPerson => {
+    res.json(savedPerson.toJSON)
+  })
+})
+
+app.put("/api/notes/:id", (req, res, next) => {
+  const body = req.body
+
+  const person = {
+    id: req.params.id,
     name: body.name,
     number: body.number
   }
 
-  luettelo = luettelo.concat(person)
-
-  res.json(person)
+  Person.findByIdAndUpdate(req.params.id, person)
+    .then(updatedPerson => {
+      res.json(updatedPerson.toJSON())
+    })
+    .catch(error => next(error))
 })
 
 let luettelo = [
@@ -84,17 +135,18 @@ let luettelo = [
   },
   {
     id: 3,
-    name: "rottajulli",
-    number: "vitun rotta"
+    name: "Hernik lahje",
+    number: "1312"
   },
   {
     id: 4,
-    name: "Hernik lahje",
-    number: "fleimaaja :^)"
+    name: "testi",
+    number: "123454321"
   }
 ]
-
-const PORT = process.env.PORT || 3001
+app.use(unknownEndpoint)
+app.use(errorHandler)
+const PORT = process.env.PORT
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`)
 })
